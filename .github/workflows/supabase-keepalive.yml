@@ -1,0 +1,45 @@
+# Keeps the Flock Supabase project (free plan) from being paused for inactivity.
+# Runs a tiny read query every day. Once a month it also commits a timestamp,
+# because GitHub turns off scheduled workflows in repos with no activity for 60 days.
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Supabase
+        env:
+          SUPABASE_URL: https://upyqbpfwmzxlzjocgekb.supabase.co
+          # Public anon key (same one the app and auth.html already ship with)
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVweXFicGZ3bXp4bHpqb2NnZWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzODM3NDEsImV4cCI6MjA5MDk1OTc0MX0.-cANh-wbt3X0bk1LJQ5CdmoNel7Xo6d76hoUO7gs88g
+        run: |
+          code=$(curl -s -o /tmp/out.json -w '%{http_code}' \
+            "$SUPABASE_URL/rest/v1/communities?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+          echo "HTTP $code"; cat /tmp/out.json; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Supabase answered $code. The project may be paused: open https://supabase.com/dashboard/project/upyqbpfwmzxlzjocgekb and press Restore."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Monthly activity commit
+        run: |
+          month=$(date -u +%Y-%m)
+          if [ "$(cat .github/keepalive 2>/dev/null)" != "$month" ]; then
+            echo "$month" > .github/keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/keepalive
+            git commit -m "keep-alive $month"
+            git push
+          fi
