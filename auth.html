@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flock Account</title>
+<style>
+  :root { --bg:#f6f5ff; --card:#fff; --text:#1d1b2e; --muted:#6b6880; --accent:#5B4FE8; --err:#c0392b; --ok:#2e8b57; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
+  .wrap { max-width:420px; margin:0 auto; padding:48px 16px; }
+  .card { background:var(--card); border-radius:16px; padding:28px 22px; box-shadow:0 4px 24px rgba(40,30,120,.08); }
+  .logo { font-size:40px; text-align:center; }
+  h1 { font-size:22px; text-align:center; margin:8px 0 6px; }
+  p { color:var(--muted); line-height:1.5; text-align:center; margin:0 0 18px; }
+  label { display:block; font-size:14px; font-weight:600; margin:14px 0 6px; }
+  input { width:100%; padding:12px 14px; font-size:16px; border:1px solid #d9d6ee; border-radius:10px; }
+  button { width:100%; margin-top:20px; padding:14px; font-size:16px; font-weight:700; color:#fff; background:var(--accent); border:0; border-radius:10px; cursor:pointer; }
+  button:disabled { opacity:.6; }
+  .msg { margin-top:16px; font-size:14px; text-align:center; }
+  .msg.err { color:var(--err); } .msg.ok { color:var(--ok); }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card">
+  <div class="logo">🐦</div>
+  <h1 id="title">Flock</h1>
+  <p id="sub">Loading…</p>
+
+  <form id="form" class="hidden">
+    <label for="pw1">New password</label>
+    <input id="pw1" type="password" autocomplete="new-password" minlength="6" required>
+    <label for="pw2">Confirm new password</label>
+    <input id="pw2" type="password" autocomplete="new-password" minlength="6" required>
+    <button id="btn" type="submit">Update password</button>
+  </form>
+  <div id="msg" class="msg"></div>
+  <a id="openApp" class="hidden" href="flockapp://" style="display:block;margin-top:14px;text-align:center;color:#5B4FE8;font-weight:600;text-decoration:none">Open Flock</a>
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+  const SUPABASE_URL = "https://upyqbpfwmzxlzjocgekb.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVweXFicGZ3bXp4bHpqb2NnZWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzODM3NDEsImV4cCI6MjA5MDk1OTc0MX0.-cANh-wbt3X0bk1LJQ5CdmoNel7Xo6d76hoUO7gs88g";
+
+  const $ = (id) => document.getElementById(id);
+  const show = (title, sub) => { $("title").textContent = title; $("sub").textContent = sub; };
+  const setMsg = (text, kind) => { $("msg").textContent = text; $("msg").className = "msg " + (kind || ""); };
+
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const query = new URLSearchParams(location.search);
+  const type = hash.get("type") || query.get("type");
+  const errDesc = hash.get("error_description") || query.get("error_description");
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { detectSessionInUrl: true, persistSession: false, flowType: "implicit" }
+  });
+
+  async function init() {
+    if (errDesc) {
+      show("Link expired", "This link is no longer valid. Please go back to the Flock app and tap \"Forgot password\" again to get a new email.");
+      return;
+    }
+    const code = query.get("code");
+    if (code) {
+      const { error } = await sb.auth.exchangeCodeForSession(code);
+      if (error) { show("Link expired", "Please request a new email from the Flock app."); return; }
+    }
+    const { data } = await sb.auth.getSession();
+    if (!data.session) {
+      show("Flock", "Open the link from your email to continue. If it doesn't work, request a new one from the Flock app.");
+      return;
+    }
+    if (type === "recovery" || code) {
+      show("Set a new password", "Choose a new password for your Flock account.");
+      $("form").classList.remove("hidden");
+    } else {
+      show("Email confirmed", "You're all set. Go back to the Flock app and sign in.");
+    }
+    history.replaceState(null, "", location.pathname);
+  }
+
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const a = $("pw1").value, b = $("pw2").value;
+    if (a.length < 6) return setMsg("Password must be at least 6 characters.", "err");
+    if (a !== b) return setMsg("Passwords don't match.", "err");
+    $("btn").disabled = true; setMsg("");
+    const { error } = await sb.auth.updateUser({ password: a });
+    $("btn").disabled = false;
+    if (error) return setMsg(error.message, "err");
+    $("form").classList.add("hidden");
+    show("Password updated", "Your password has been changed. Open the Flock app and sign in with your new password.");
+    setMsg("", "ok");
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) $("openApp").classList.remove("hidden");
+    await sb.auth.signOut();
+  });
+
+  init();
+</script>
+</body>
+</html>
