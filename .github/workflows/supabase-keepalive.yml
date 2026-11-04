@@ -1,11 +1,12 @@
 # Keeps the Flock Supabase project (free plan) from being paused for inactivity.
-# Runs a tiny read query every day. Once a month it also commits a timestamp,
-# because GitHub turns off scheduled workflows in repos with no activity for 60 days.
+# Runs 4 times a day: a write through the keepalive_ping RPC, a table read and an
+# auth health check. Once a month it also commits a timestamp, because GitHub turns
+# off scheduled workflows in repos with no activity for 60 days.
 name: Supabase keep-alive
 
 on:
   schedule:
-    - cron: '17 6 * * *'
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -15,18 +16,30 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Query Supabase
+      - name: Ping Supabase
         env:
           SUPABASE_URL: https://upyqbpfwmzxlzjocgekb.supabase.co
           # Public anon key (same one the app and auth.html already ship with)
           SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVweXFicGZ3bXp4bHpqb2NnZWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzODM3NDEsImV4cCI6MjA5MDk1OTc0MX0.-cANh-wbt3X0bk1LJQ5CdmoNel7Xo6d76hoUO7gs88g
         run: |
+          H1="apikey: $SUPABASE_ANON_KEY"; H2="Authorization: Bearer $SUPABASE_ANON_KEY"
+          fail=0
+          # 1) Write: bumps public.keepalive.pinged_at
+          code=$(curl -s -o /tmp/rpc.json -w '%{http_code}' -X POST \
+            "$SUPABASE_URL/rest/v1/rpc/keepalive_ping" \
+            -H "$H1" -H "$H2" -H "Content-Type: application/json" -d '{}')
+          echo "RPC HTTP $code"; cat /tmp/rpc.json; echo
+          [ "$code" = "200" ] || fail=1
+          # 2) Read
           code=$(curl -s -o /tmp/out.json -w '%{http_code}' \
-            "$SUPABASE_URL/rest/v1/communities?select=id&limit=1" \
-            -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY")
-          echo "HTTP $code"; cat /tmp/out.json; echo
-          if [ "$code" != "200" ]; then
-            echo "::error::Supabase answered $code. The project may be paused: open https://supabase.com/dashboard/project/upyqbpfwmzxlzjocgekb and press Restore."
+            "$SUPABASE_URL/rest/v1/communities?select=id&limit=1" -H "$H1" -H "$H2")
+          echo "READ HTTP $code"; cat /tmp/out.json; echo
+          [ "$code" = "200" ] || fail=1
+          # 3) Auth service
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$SUPABASE_URL/auth/v1/health" -H "$H1")
+          echo "AUTH HTTP $code"
+          if [ "$fail" = "1" ]; then
+            echo "::error::Supabase did not answer 200. The project may be paused: open https://supabase.com/dashboard/project/upyqbpfwmzxlzjocgekb and press Restore."
             exit 1
           fi
 
